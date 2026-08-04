@@ -27,20 +27,22 @@ spec:
             - name: TARGET_DEPLOYMENT
               value: "inference-deployment"
             - name: MIN_REPLICAS
-              value: "2"          # warm floor: cuts cold-start at the ramp start
+              value: "2"          # warm floor so the ramp doesn't start cold
             - name: MAX_REPLICAS
-              value: "6"          # leave ~2 cores headroom on the 8-core node for
-                                  # dispatcher + system pods (avoids CPU overcommit)
+              value: "6"          # each replica requests 1 core; capping at 6 on an
+                                  # 8-core node leaves headroom for dispatcher +
+                                  # system pods, which otherwise get CPU-starved
             - name: TICK_INTERVAL_S
-              value: "15"         # decision cadence per project slide 23 (every 15s)
+              value: "15"         # matches HPA's default evaluation interval
             - name: LATENCY_TARGET_S
-              value: "0.30"
+              value: "0.30"       # scale up before p95 approaches the 500ms SLO
             - name: CPU_TARGET
               value: "0.70"
             - name: QUEUE_TARGET_PER_REPLICA
-              value: "1.0"        # scale up sooner (was 1.5)
+              value: "1.0"        # replicas handle one request at a time, so a
+                                  # backlog of >1 per replica means we're behind
             - name: SCALE_DOWN_QUIET_TICKS
-              value: "4"          # 4 x 15s = 60s, same calm scale-down as before
+              value: "4"          # 4 x 15s = 60s of agreement before removing a pod
           resources:
             requests:
               cpu: "100m"

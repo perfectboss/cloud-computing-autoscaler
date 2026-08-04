@@ -5,15 +5,15 @@
 #   $1 = trial name (e.g. "custom", "hpa70", "hpa90")
 #   $2 = autoscaler mode: "custom", "hpa70", "hpa90"
 #   $3 = limit-seconds (0 = full workload)
-#   $4 = results dir (absolute)
+#   $4 = results dir
 
-set -u  # don't set -e — we want partial artifacts on failure
+set -u  # deliberately not -e: we want partial artifacts if a step fails
 
 NAME="$1"
 MODE="$2"
 LIMIT="${3:-0}"
 OUT="$4"
-PROJECT_ROOT="E:/cloud-computing-project"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 K8S="$PROJECT_ROOT/k8s"
 TRIAL_DIR="$OUT/$NAME"
 mkdir -p "$TRIAL_DIR"

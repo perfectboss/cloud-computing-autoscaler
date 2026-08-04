@@ -1,197 +1,174 @@
-# Cloud Computing Project — Autoscaling Inference
+# Elastic ML Inference Serving on Kubernetes
 
-A FastAPI ResNet18 image-classification service deployed on Kubernetes (minikube), fronted by a dispatcher, monitored with Prometheus, and load-tested under a bell-curve workload to compare a **custom autoscaler** against Kubernetes HPA at 70% and 90% CPU targets.
+A ResNet18 image-classification service that scales itself under a bursty workload. The
+project compares a custom queue-aware autoscaler against the Kubernetes Horizontal Pod
+Autoscaler (HPA) at 70% and 90% CPU targets, on a 10-minute production-shaped traffic
+trace.
 
-## What's in here
+The custom autoscaler holds a **95.5% success rate** where HPA manages 62-65%, because it
+scales on dispatcher queue depth rather than CPU utilization alone.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    LT[Load Tester<br/>barazmoon] --> D[Dispatcher<br/>FastAPI queue]
+    D --> R1[Replica 1<br/>ResNet18]
+    D --> R2[Replica 2]
+    D --> RN[Replica N]
+    R1 & R2 & RN -.metrics.-> P[Prometheus]
+    D -.metrics.-> P
+    P --> A[Autoscaler]
+    A -->|scale| R1
+```
+
+Every component runs in the cluster. The dispatcher is the only place queuing happens;
+replicas process one request at a time so that queue depth is a true signal of saturation.
+
+| Component | Stack | Role |
+| --- | --- | --- |
+| `ml-service` | FastAPI, PyTorch (CPU), ResNet18 | Classifies an uploaded image, reports its own compute time |
+| `dispatcher` | FastAPI, httpx | Central queue, load balances to replicas, drops on overflow |
+| `autoscaler` | Python, Kubernetes client | Polls Prometheus every 15s, patches the Deployment's replica count |
+| `load-tester` | barazmoon, aiohttp | Replays `workload.txt` as timed HTTP requests |
+| monitoring | Prometheus | Scrapes pods via annotation-based discovery |
+
+## Results
+
+The service-level objective is **server-side latency under 500 ms**, where server-side
+means the inference compute time reported by the pod itself.
+
+| Metric | Custom autoscaler | HPA @ 70% CPU | HPA @ 90% CPU |
+| --- | --- | --- | --- |
+| Server-side SLO met | **99.99%** | 100.00% | 100.00% |
+| Server-side p99 | 194 ms | 124 ms | 122 ms |
+| Success rate | **95.5%** | 65.0% | 62.0% |
+| End-to-end p99 | **8.3 s** | 13.0 s | 15.8 s |
+| Peak CPU cores | 6 | 2 | 2 |
+
+Workload: 619 seconds, ~9,900 requests, bell-curve shape peaking at 44 requests/second.
+
+![CPU cores over time](experiments/results/charts/cpu_cores.png)
+
+Two latencies are worth separating. *Server-side* latency is inference compute only and
+stays well under the SLO for every configuration. *End-to-end* latency adds the time a
+request waits in the dispatcher queue, which is where the autoscalers diverge sharply.
+
+### Why HPA underperforms here
+
+HPA scales on average CPU utilization across pods. Once two replicas are running, average
+CPU falls below the target, so HPA stops scaling. But the bottleneck was never per-replica
+CPU: it is the queue building up behind the replicas. HPA cannot see that queue, so it
+holds at two replicas while thousands of requests time out. Raising the target from 70% to
+90% changes little, because the problem is the choice of signal, not its threshold.
+
+### How the custom autoscaler works
+
+It reads four signals each tick and takes the **maximum** of the replica counts they imply,
+so any single signal can call for capacity:
+
+1. **Queue depth + in-flight requests** from the dispatcher. Leading indicator, fires
+   before CPU saturates.
+2. **p95 server-side latency** from Prometheus. Direct measure of user-facing pain.
+3. **CPU utilization**, the classic HPA formula, as a backstop.
+4. **A warm floor** of 2 replicas so the ramp does not begin from a cold start.
+
+Scale-up and scale-down are deliberately asymmetric. Scaling up happens in a single tick
+because under-provisioning drops requests. Scaling down requires four consecutive quiet
+ticks and then removes one replica at a time, which avoids thrashing on a noisy signal.
+
+`maxReplicas` is 6 rather than 8. Each replica requests a full CPU core, and the node has
+8, so allowing 8 inference pods starved the dispatcher and system pods. Capping at 6 leaves
+headroom and measurably improved both latency and success rate.
+
+## Repository layout
 
 ```
-ml-service\         FastAPI + ResNet18 inference service (CPU-only, 1 thread)
-dispatcher\         FastAPI front-end with queue, latency, and inflight metrics
-autoscaler\         Multi-signal custom autoscaler (queue + latency + CPU)
-load-tester\        barazmoon-based load generator driven by workload.txt
-k8s\                All Kubernetes manifests
-experiments\        Trial runner, replica recorder, analyzer, charts
-test-images\        1,000 ImageNet sample images (for smoke tests)
-workload.txt        Per-second RPS schedule for the experiment
+ml-service/      Inference service, Dockerfile, requirements
+dispatcher/      Queue and load balancer
+autoscaler/      Scaling control loop
+load-tester/     Workload driver
+k8s/             Deployments, services, RBAC, Prometheus, HPA manifests
+experiments/     Trial runner, analysis, plots, and the full report
+sample-images/   10 ImageNet samples for smoke tests
+workload.txt     Per-second request rates for the experiment
 ```
 
-## Final results
+Full write-up with methodology and caveats: [experiments/REPORT.md](experiments/REPORT.md)
+([PDF](experiments/REPORT.pdf)). Raw per-request data and charts live under
+[experiments/results/](experiments/results/).
 
-**The required SLO — server-side latency < 0.5 s — is met (99.99–100% across configs):**
+## Running it
 
-| Metric                          | Custom autoscaler | HPA @ 70% CPU | HPA @ 90% CPU |
-| ---                             | ---               | ---           | ---           |
-| **Server-side SLO (< 500 ms)**  | **99.99 %**       | **100.00 %**  | **100.00 %**  |
-| Server-side p99                 | 194 ms            | 124 ms        | 122 ms        |
-| Server-side max                 | 668 ms¹           | 211 ms        | 325 ms        |
+Requires Docker, minikube, kubectl, and Python 3.11+.
 
-¹ one 668 ms outlier of 9,455 requests (a one-off scheduler hiccup); inference p99 is 194 ms.
+**1. Start the cluster and build images into minikube's Docker daemon.**
 
-Secondary comparison — **end-to-end** latency (includes dispatcher queue wait; where the custom autoscaler beats HPA):
-
-| Metric                          | Custom autoscaler | HPA @ 70% CPU | HPA @ 90% CPU |
-| ---                             | ---               | ---           | ---           |
-| Success rate                    | **95.5 %**        | 65.0 %        | 62.0 %        |
-| End-to-end SLO (< 500 ms)       | **81.4 %**        | 52.1 %        | 55.1 %        |
-| End-to-end p99                  | **8,310 ms**      | 13,028 ms     | 15,817 ms     |
-| Max CPU cores used              | 6                 | 2             | 2             |
-
-Full write-up: [experiments/REPORT.md](experiments/REPORT.md). Charts under [experiments/results/charts/](experiments/results/charts/) — see `server_latency_cdf.png` for the SLO proof.
-
----
-
-## Prerequisites
-
-- **Docker Desktop** (must be running)
-- **minikube** (cluster `minikube` already created)
-- **kubectl** on PATH
-- **Python 3.11+** with `matplotlib` (for `plot.py`)
-- VS Code is optional — any terminal works
-
----
-
-## Scenario A — Starting fresh (or after Docker / laptop restart)
-
-### Step 1 — Bring up the cluster (~3 min)
-
-Use **PowerShell** (Terminal A in VS Code is fine):
-
-```powershell
-# Confirm Docker daemon is up
-docker info --format '{{.ServerVersion}}'
-
-# Confirm minikube cluster is up
-minikube status -p minikube
-
-# If minikube isn't running:
-minikube start -p minikube --cpus=8 --memory=8g
-
-# Confirm kubectl is talking to the cluster
-kubectl get nodes
-
-# Enable metrics-server (only needed once per cluster lifetime)
+```bash
+minikube start --cpus=8 --memory=8g
 minikube addons enable metrics-server
+eval $(minikube docker-env)          # PowerShell: & minikube docker-env --shell powershell | Invoke-Expression
+
+docker build -t ml-inference:v2 ml-service
+docker build -t dispatcher:v3   dispatcher
+docker build -t autoscaler:v1   autoscaler
+docker build -t load-tester:v1  load-tester
 ```
 
-### Step 2 — Build all 4 images into minikube's docker (~15 min first time, ~2 min on rebuilds)
+The first `ml-inference` build takes a few minutes: it downloads CPU-only PyTorch wheels
+and bakes the ResNet18 weights into the image so pods start fast.
 
-Images must live in **minikube's** Docker daemon, not your host's. `minikube docker-env` redirects `DOCKER_HOST` to point there.
-
-```powershell
-# Point this terminal at minikube's docker daemon (only affects this terminal)
-& minikube -p minikube docker-env --shell powershell | Invoke-Expression
-
-# Build everything
-docker build -t ml-inference:v2 E:\cloud-computing-project\ml-service
-docker build -t dispatcher:v3   E:\cloud-computing-project\dispatcher
-docker build -t autoscaler:v1   E:\cloud-computing-project\autoscaler
-docker build -t load-tester:v1  E:\cloud-computing-project\load-tester
-
-# Sanity check
-docker images | findstr "ml-inference dispatcher autoscaler load-tester"
-```
-
-> **Note:** the `ml-inference` build is slow first time (downloads PyTorch CPU wheels and bakes ResNet18 weights into the image). Subsequent builds are seconds because Docker caches layers.
-
-### Step 3 — Deploy everything (~2 min)
-
-```powershell
-# Workload ConfigMap from workload.txt
-kubectl create configmap workload --from-file=workload.txt=E:\cloud-computing-project\workload.txt --dry-run=client -o yaml | kubectl apply -f -
-
-# Apply all manifests
-kubectl apply -f E:\cloud-computing-project\k8s\inference-deployment.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\inference-service.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\dispatcher-deployment.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\dispatcher-service.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\prometheus-rbac.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\prometheus-configmap.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\prometheus-deployment.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\autoscaler-rbac.yaml
-kubectl apply -f E:\cloud-computing-project\k8s\autoscaler-deployment.yaml
-
-# Wait for everything ready
-kubectl rollout status deployment/inference-deployment
-kubectl rollout status deployment/dispatcher-deployment
-kubectl rollout status deployment/prometheus
-kubectl rollout status deployment/autoscaler
-```
-
-### Step 4 — Quick smoke test
-
-```powershell
-# Terminal B — port-forward dispatcher
-kubectl port-forward service/dispatcher-service 18000:8000
-
-# Terminal A — send one image
-curl.exe -F "file=@E:\cloud-computing-project\test-images\n02123045_tabby.JPEG" http://127.0.0.1:18000/predict
-# Should return: {"labels": ["Egyptian cat", "tabby", ...], "server_latency_s": ~0.08, "pod": "..."}
-```
-
-Ctrl+C the port-forward when done.
-
----
-
-## Scenario B — Just re-run the experiment (assumes Scenario A done)
-
-The trial runner is a **bash** script (uses `awk`/`sed`/etc.), so open **Git Bash** (or WSL) for this part:
+**2. Deploy.**
 
 ```bash
-cd "E:/cloud-computing-project"
+kubectl create configmap workload --from-file=workload.txt
+kubectl apply -f k8s/inference-deployment.yaml -f k8s/inference-service.yaml
+kubectl apply -f k8s/dispatcher-deployment.yaml -f k8s/dispatcher-service.yaml
+kubectl apply -f k8s/prometheus-rbac.yaml -f k8s/prometheus-configmap.yaml -f k8s/prometheus-deployment.yaml
+kubectl apply -f k8s/autoscaler-rbac.yaml -f k8s/autoscaler-deployment.yaml
+```
 
-# Trial 1: Custom autoscaler vs full workload (~12 min)
+The HPA manifests are applied by the trial runner, not here, so they do not fight the
+custom autoscaler.
+
+**3. Smoke test.**
+
+```bash
+kubectl port-forward service/dispatcher-service 18000:8000 &
+curl -F "file=@sample-images/n02123045_tabby.JPEG" http://127.0.0.1:18000/predict
+```
+
+Returns the top-5 labels, the pod that served the request, and its server-side latency.
+
+**4. Run the experiment** (three trials, roughly 12 minutes each).
+
+```bash
 bash experiments/run_trial.sh custom custom 0 experiments/results
+bash experiments/run_trial.sh hpa70  hpa70  0 experiments/results
+bash experiments/run_trial.sh hpa90  hpa90  0 experiments/results
 
-# Trial 2: HPA at 70% CPU (~12 min)
-bash experiments/run_trial.sh hpa70 hpa70 0 experiments/results
-
-# Trial 3: HPA at 90% CPU (~12 min)
-bash experiments/run_trial.sh hpa90 hpa90 0 experiments/results
+python experiments/analyze.py    # comparison table + summary.csv
+python experiments/plot.py       # charts
 ```
 
-Each trial:
-1. Scales `inference-deployment` back to 1 replica
-2. Configures the chosen autoscaler (scales custom up/down, applies/removes HPA YAML)
-3. Starts a 1-Hz replica recorder in the background
-4. Launches the load-tester Job
-5. Waits for completion; captures CSV + replica timeline
-6. Writes everything to `experiments/results/<name>/`
+Each trial resets to one replica, applies the right autoscaler, records replica counts once
+per second, replays the workload, and writes per-request timings to
+`experiments/results/<trial>/results.csv`.
 
-### Then analyze and plot
+## Notes and limitations
 
-```bash
-python experiments/analyze.py
-python experiments/plot.py
-```
+- Single-node minikube on a laptop. Results vary between runs, especially the long tail;
+  the qualitative gap between the autoscalers is stable, the exact percentages are not.
+- The one server-side sample above 500 ms (668 ms of 9,455 requests) is a scheduler
+  hiccup, not sustained slowness. Inference p99 is 194 ms.
+- The CPU signal is present in the autoscaler but effectively unused, since Prometheus is
+  not scraping cAdvisor in this setup. Queue depth and latency drive the decisions.
+- `test-images/` (the full 1,000-image set) is not committed. The load tester fetches
+  samples at runtime, or clone them from
+  [imagenet-sample-images](https://github.com/EliSchwartz/imagenet-sample-images).
 
-Output: comparison table to stdout, `experiments/results/summary.csv`, charts in `experiments/results/charts/`.
+## Acknowledgements
 
----
-
-## Useful operations
-
-| Goal | Command |
-| --- | --- |
-| Watch the autoscaler decisions | `kubectl logs -f deploy/autoscaler` |
-| Open Prometheus UI | `kubectl port-forward service/prometheus 9090:9090` then http://localhost:9090 |
-| Watch replicas during a trial | `watch -n 5 'kubectl get deploy inference-deployment'` |
-| Force a rebuild + redeploy of dispatcher | `docker build -t dispatcher:v3 dispatcher\ ; kubectl rollout restart deploy/dispatcher-deployment` |
-| Update `workload.txt` ConfigMap | `kubectl create configmap workload --from-file=workload.txt=workload.txt --dry-run=client -o yaml \| kubectl apply -f -` |
-| Wipe and reapply everything | `kubectl delete deploy --all ; kubectl apply -f k8s\` |
-
----
-
-## Shutting down cleanly
-
-In **PowerShell**:
-
-```powershell
-# 1) Stop minikube — leaves the cluster's state on disk; resumes fast next time
-minikube stop -p minikube
-
-# 2) Quit Docker Desktop from the tray icon (or `wsl --shutdown` if using WSL backend)
-
-# 3) Safe to shut down the laptop
-```
-
-Next time, `minikube start -p minikube` brings everything back exactly where it was.
+Load generation uses [barazmoon](https://github.com/reconfigurable-ml-pipeline/load_tester).
+Sample images come from [imagenet-sample-images](https://github.com/EliSchwartz/imagenet-sample-images).
+The workload trace is adapted from an [archived Twitter stream](https://archive.org/details/archiveteam-twitter-stream-2021-08).

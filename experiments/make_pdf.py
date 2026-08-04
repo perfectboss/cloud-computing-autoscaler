@@ -12,8 +12,9 @@ from reportlab.platypus import (
 )
 
 
-ROOT = Path("E:/cloud-computing-project/experiments/results")
-OUT = Path("E:/cloud-computing-project/experiments/REPORT.pdf")
+HERE = Path(__file__).resolve().parent
+ROOT = HERE / "results"
+OUT = HERE / "REPORT.pdf"
 CHARTS = ROOT / "charts"
 
 
@@ -88,13 +89,13 @@ def main() -> None:
     setup_text = [
         "<b>Cluster:</b> minikube on Docker Desktop, 8 CPU budget.",
         "<b>Workload:</b> workload.txt &mdash; 619 seconds, ~9,900 requests, peak 44 RPS, bell-curve shape.",
-        "<b>Inference service:</b> ResNet18 on ImageNet, CPU-only, 1 CPU req+limit per replica (per slide 21).",
+        "<b>Inference service:</b> ResNet18 on ImageNet, CPU-only, 1 CPU req+limit per replica.",
         "<b>Dispatcher:</b> FastAPI front-end, queue capacity 256, 10 s upstream timeout.",
         "<b>Replica bounds:</b> HPA minReplicas=1; custom minReplicas=2 (warm floor); maxReplicas=6 for all "
         "(leaves ~2 of the 8 node cores for the dispatcher + system pods).",
-        "<b>Autoscaler cadence:</b> custom autoscaler decides every 15 s (per slide 23).",
+        "<b>Autoscaler cadence:</b> custom autoscaler decides every 15 s.",
         "<b>Load driver:</b> barazmoon (load_tester repo), multipart image POST.",
-        "<b>SLO:</b> server-side latency &lt; 500 ms (per slide 17).",
+        "<b>SLO:</b> server-side latency &lt; 500 ms.",
     ]
     for line in setup_text:
         story.append(Paragraph(line, body))
@@ -180,12 +181,12 @@ def main() -> None:
          "for 99.99 % of queries (custom) and 100 % (HPA). Inference p99 is ~194 ms. This is the "
          "project's required SLO and it is met."),
         ("cpu_cores.png",
-         "CPU cores over time (per slide: compare number of CPU cores)",
+         "CPU cores over time",
          "Each replica has a CPU request and limit of 1, so replica count equals CPU cores in use. "
          "Custom (blue) scales up to 6 cores through the peak. Both HPA configs stay near their floor "
          "(1-2 cores) because average CPU never trips their threshold."),
         ("rolling_p99.png",
-         "Rolling 99th-percentile end-to-end latency (per slide: compare p99 latency)",
+         "Rolling 99th-percentile end-to-end latency",
          "End-to-end view (includes queue wait). Custom recovers below the 500 ms SLO line through "
          "most of the peak; both HPA configs stay an order of magnitude above it during the peak."),
         ("latency_cdf.png",

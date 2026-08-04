@@ -77,8 +77,8 @@ def plot_replicas(data: dict, out_path: Path) -> None:
 
 
 def plot_rolling_latency(data: dict, out_path: Path, window_s: int = 10) -> None:
-    # 99th-percentile end-to-end latency time-series (per project slide 17:
-    # "Compare the service 99th percentile latency from start to end").
+    # 99th-percentile end-to-end latency time-series: the headline
+    # comparison metric between autoscalers.
     fig, ax = plt.subplots(figsize=(11, 5))
     ax.axhline(SLO_MS, color="black", linestyle="--", linewidth=1, alpha=0.6, label=f"SLO {SLO_MS} ms")
     for name in TRIALS:
@@ -133,7 +133,7 @@ def plot_latency_cdf(data: dict, out_path: Path) -> None:
 
 
 def plot_server_cdf(data: dict, out_path: Path) -> None:
-    """CDF of SERVER-SIDE latency (pure inference compute) — the PDF's SLO metric."""
+    """CDF of server-side latency: inference compute time, the SLO metric."""
     fig, ax = plt.subplots(figsize=(11, 5))
     ax.axvline(SLO_MS, color="black", linestyle="--", linewidth=1, alpha=0.6, label=f"SLO {SLO_MS} ms")
     for name in TRIALS:
@@ -189,8 +189,9 @@ def plot_summary_bars(data: dict, out_path: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="E:/cloud-computing-project/experiments/results")
-    ap.add_argument("--out", default="E:/cloud-computing-project/experiments/results/charts")
+    here = Path(__file__).resolve().parent
+    ap.add_argument("--root", default=str(here / "results"))
+    ap.add_argument("--out", default=str(here / "results" / "charts"))
     args = ap.parse_args()
 
     root = Path(args.root)

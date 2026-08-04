@@ -66,8 +66,8 @@ def stats_for_trial(trial_dir: Path) -> dict:
     sub_slo = [r for r in successful if r["latency_ms"] < SLO_MS]
     lats = sorted(r["latency_ms"] for r in successful)
 
-    # Server-side latency: pure inference compute time reported by the pod.
-    # This is the latency the PDF's SLO is actually defined on.
+    # Server-side latency: time the pod itself spent on inference.
+    # This is what the SLO is defined on.
     server_lats = sorted(r["server_ms"] for r in successful if r["server_ms"] is not None)
     server_sub_slo = [v for v in server_lats if v < SLO_MS]
 
@@ -159,7 +159,7 @@ def print_table(stats: list[dict]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default="E:/cloud-computing-project/experiments/results")
+    ap.add_argument("--root", default=str(Path(__file__).resolve().parent / "results"))
     args = ap.parse_args()
     root = Path(args.root)
     trial_dirs = sorted([p for p in root.iterdir() if p.is_dir() and (p / "results.csv").exists()])
@@ -188,7 +188,7 @@ def main() -> None:
 
     print_table(stats)
     print()
-    print("# SLO target: 500 ms server-side latency per the PDF.")
+    print("# SLO target: 500 ms server-side latency.")
     print("# Replica-seconds = cumulative replicas × 1-second samples (proxy for resource cost).")
     # Save a flat summary CSV too.
     summary_csv = root / "summary.csv"

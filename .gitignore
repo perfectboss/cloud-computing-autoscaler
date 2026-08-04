@@ -1,6 +1,10 @@
-# Large downloaded sample images (1,000 ImageNet samples).
-# Regenerate from https://github.com/EliSchwartz/imagenet-sample-images
+# Full 1,000-image ImageNet sample set, fetched separately.
+# A 10-image subset is committed under sample-images/ for smoke tests.
 test-images/
+
+# Raw load-tester stdout (~1 MB per trial). The per-request data it contains
+# is already extracted into results/<trial>/results.csv.
+experiments/results/*/load_tester.log
 
 # Python
 __pycache__/
