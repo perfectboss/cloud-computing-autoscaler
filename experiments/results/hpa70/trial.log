@@ -1,0 +1,13 @@
+[12:15:22] === Trial: hpa70 (mode=hpa70 limit=0s) ===
+[12:15:22] Step 1: Reset to 1 replica + clear prior load-tester job + clear prior HPA
+[12:15:23] Step 2: Configure autoscaler (hpa70)
+[12:15:27] Step 3: Wait for 1 ready replica
+[12:15:27]   Ready in 1s
+[12:15:28] Step 4: Start replica recorder (duration=659s)
+[12:15:28]   Recorder PID: 1307
+[12:15:28] Step 5: Launch load-tester Job (limit-seconds=0)
+[12:15:28] Step 6: Wait for load-tester completion
+[12:27:15] Step 7: Capture logs + CSV
+[12:27:16] Step 8: Wait for replica recorder to finish
+[12:27:16] Done. Captured 9910 request rows. Artifacts in experiments/results-final/hpa70
+[12:27:16] === Trial hpa70 complete ===

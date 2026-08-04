@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: load-tester
+  labels:
+    app: load-tester
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: load-tester
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load-tester
+          image: load-tester:v1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "load_tester.py"]
+          args:
+            - "--workload=/workload/workload.txt"
+            - "--endpoint=http://dispatcher-service:8000/predict"
+            - "--results-dir=/results"
+            - "--limit-seconds=30"
+          volumeMounts:
+            - name: workload
+              mountPath: /workload
+              readOnly: true
+            - name: results
+              mountPath: /results
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+      volumes:
+        - name: workload
+          configMap:
+            name: workload
+        - name: results
+          emptyDir: {}

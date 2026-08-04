@@ -1,0 +1,13 @@
+[12:27:16] === Trial: hpa90 (mode=hpa90 limit=0s) ===
+[12:27:16] Step 1: Reset to 1 replica + clear prior load-tester job + clear prior HPA
+[12:27:17] Step 2: Configure autoscaler (hpa90)
+[12:27:21] Step 3: Wait for 1 ready replica
+[12:27:21]   Ready in 1s
+[12:27:21] Step 4: Start replica recorder (duration=659s)
+[12:27:21]   Recorder PID: 1371
+[12:27:21] Step 5: Launch load-tester Job (limit-seconds=0)
+[12:27:22] Step 6: Wait for load-tester completion
+[12:39:07] Step 7: Capture logs + CSV
+[12:39:08] Step 8: Wait for replica recorder to finish
+[12:39:08] Done. Captured 9900 request rows. Artifacts in experiments/results-final/hpa90
+[12:39:08] === Trial hpa90 complete ===

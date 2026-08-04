@@ -1,0 +1,23 @@
+# Large downloaded sample images (1,000 ImageNet samples).
+# Regenerate from https://github.com/EliSchwartz/imagenet-sample-images
+test-images/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Intermediate / scratch experiment artifacts (keep only results/)
+experiments/results-*/
+experiments/sanity/
+experiments/smoke-check/
+experiments/REPORT-*.pdf
+slides_text.txt
+
+# Load-tester scratch files
+load-tester/smoke-*.csv
+load-tester/smoke-*.txt
+
+# OS cruft
+Thumbs.db
+.DS_Store

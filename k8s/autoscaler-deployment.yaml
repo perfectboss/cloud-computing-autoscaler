@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscaler
+  labels:
+    app: autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoscaler
+  template:
+    metadata:
+      labels:
+        app: autoscaler
+    spec:
+      serviceAccountName: autoscaler
+      containers:
+        - name: autoscaler
+          image: autoscaler:v1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus:9090"
+            - name: TARGET_NAMESPACE
+              value: "default"
+            - name: TARGET_DEPLOYMENT
+              value: "inference-deployment"
+            - name: MIN_REPLICAS
+              value: "2"          # warm floor: cuts cold-start at the ramp start
+            - name: MAX_REPLICAS
+              value: "6"          # leave ~2 cores headroom on the 8-core node for
+                                  # dispatcher + system pods (avoids CPU overcommit)
+            - name: TICK_INTERVAL_S
+              value: "15"         # decision cadence per project slide 23 (every 15s)
+            - name: LATENCY_TARGET_S
+              value: "0.30"
+            - name: CPU_TARGET
+              value: "0.70"
+            - name: QUEUE_TARGET_PER_REPLICA
+              value: "1.0"        # scale up sooner (was 1.5)
+            - name: SCALE_DOWN_QUIET_TICKS
+              value: "4"          # 4 x 15s = 60s, same calm scale-down as before
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"

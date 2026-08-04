@@ -1,0 +1,13 @@
+[12:03:32] === Trial: custom (mode=custom limit=0s) ===
+[12:03:32] Step 1: Reset to 1 replica + clear prior load-tester job + clear prior HPA
+[12:03:33] Step 2: Configure autoscaler (custom)
+[12:03:34] Step 3: Wait for 1 ready replica
+[12:03:34]   Ready in 1s
+[12:03:34] Step 4: Start replica recorder (duration=659s)
+[12:03:34]   Recorder PID: 1243
+[12:03:34] Step 5: Launch load-tester Job (limit-seconds=0)
+[12:03:35] Step 6: Wait for load-tester completion
+[12:15:20] Step 7: Capture logs + CSV
+[12:15:21] Step 8: Wait for replica recorder to finish
+[12:15:21] Done. Captured 9901 request rows. Artifacts in experiments/results-final/custom
+[12:15:21] === Trial custom complete ===
